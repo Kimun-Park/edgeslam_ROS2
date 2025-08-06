@@ -24,11 +24,12 @@
 #include <fstream>
 #include <chrono>
 
-#include <ros/ros.h>
+#include <rclcpp/rclcpp.hpp>
 #include <cv_bridge/cv_bridge.h>
-#include <message_filters/subscriber.h>
-#include <message_filters/time_synchronizer.h>
-#include <message_filters/sync_policies/approximate_time.h>
+#include <sensor_msgs/msg/image.hpp>
+#include <message_filters/subscriber.hpp>
+#include <message_filters/synchronizer.hpp>
+#include <message_filters/sync_policies/approximate_time.hpp>
 
 #include <opencv2/core.hpp>
 
@@ -44,7 +45,7 @@ class ImageGrabber
 public:
     ImageGrabber(ORB_SLAM2::System* pSLAM):mpSLAM(pSLAM){}
 
-    void GrabRGBD(const sensor_msgs::ImageConstPtr& msgRGB,const sensor_msgs::ImageConstPtr& msgD);
+    void GrabRGBD(const sensor_msgs::msg::Image::ConstSharedPtr& msgRGB,const sensor_msgs::msg::Image::ConstSharedPtr& msgD);
 
     ORB_SLAM2::System* mpSLAM;
 };
@@ -55,12 +56,13 @@ int main(int argc, char **argv)
     // Check run type and convert to lowercase
     std::string RunType(argv[3]);
     std::transform(RunType.begin(), RunType.end(), RunType.begin(), ::tolower);
-    ros::init(argc, argv, RunType);
-    ros::start();
+    rclcpp::init(argc, argv);
+    auto node = rclcpp::Node::make_shared("Edge_SLAM_RGBD");
+    
     if((argc != 4) || ((RunType.compare("client") != 0) && (RunType.compare("server") != 0)))
     {
-        cerr << endl << "Usage: rosrun Edge_SLAM RGBD VOC_PATH SETTINGS_PATH RUN_TYPE(client|server)" << endl;
-        ros::shutdown();
+        cerr << endl << "Usage: ros2 run Edge_SLAM RGBD VOC_PATH SETTINGS_PATH RUN_TYPE(client|server)" << endl;
+        rclcpp::shutdown();
         return 1;
     }
 
@@ -73,16 +75,19 @@ int main(int argc, char **argv)
     {
         ImageGrabber igb(&SLAM);
 
-        ros::NodeHandle nh;
+        rclcpp::QoS qos(rclcpp::KeepLast(10));
+        qos.best_effort().durability_volatile();
 
-        message_filters::Subscriber<sensor_msgs::Image> rgb_sub(nh, "/camera/rgb/image_raw", 1);
-        message_filters::Subscriber<sensor_msgs::Image> depth_sub(nh, "/camera/depth_registered/image_raw", 1);
+        message_filters::Subscriber<sensor_msgs::msg::Image> rgb_sub(node, "/camera/rgb/image_raw", qos.get_rmw_qos_profile());
+        message_filters::Subscriber<sensor_msgs::msg::Image> depth_sub(node, "/camera/depth_registered/image_raw", qos.get_rmw_qos_profile());
 
-        typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> sync_pol;
-        message_filters::Synchronizer<sync_pol> sync(sync_pol(10), rgb_sub,depth_sub);
-        sync.registerCallback(boost::bind(&ImageGrabber::GrabRGBD,&igb,_1,_2));
+        using sync_pol = message_filters::sync_policies::ApproximateTime<sensor_msgs::msg::Image, sensor_msgs::msg::Image>;
+        message_filters::Synchronizer<sync_pol> sync(sync_pol(10), rgb_sub, depth_sub);
+        sync.registerCallback(
+            std::bind(&ImageGrabber::GrabRGBD, &igb, std::placeholders::_1, std::placeholders::_2)
+        );
 
-        ros::spin();
+        rclcpp::spin(node);
 
         // Edge-SLAM: split shutdown between client and server
         // Stop all threads
@@ -90,7 +95,7 @@ int main(int argc, char **argv)
     }
     else
     {
-        ros::spin();
+        rclcpp::spin(node);
 
         // Edge-SLAM: split shutdown between client and server
         // Stop all threads
@@ -100,36 +105,41 @@ int main(int argc, char **argv)
         SLAM.SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
     }
 
-    ros::shutdown();
+    rclcpp::shutdown();
 
     return 0;
 }
 
-void ImageGrabber::GrabRGBD(const sensor_msgs::ImageConstPtr& msgRGB,const sensor_msgs::ImageConstPtr& msgD)
+void ImageGrabber::GrabRGBD(const sensor_msgs::msg::Image::ConstSharedPtr& msgRGB,const sensor_msgs::msg::Image::ConstSharedPtr& msgD)
 {
+    RCLCPP_INFO(rclcpp::get_logger("Edge_SLAM_RGBD"), "Depth encoding: %s", msgD->encoding.c_str());
+
     // Copy the ros image message to cv::Mat.
-    cv_bridge::CvImageConstPtr cv_ptrRGB;
+    cv_bridge::CvImagePtr cv_ptrRGB;
     try
     {
-        cv_ptrRGB = cv_bridge::toCvShare(msgRGB);
+        cv_ptrRGB = cv_bridge::toCvCopy(msgRGB, msgRGB->encoding);
     }
     catch (cv_bridge::Exception& e)
     {
-        ROS_ERROR("cv_bridge exception: %s", e.what());
+        RCLCPP_ERROR(rclcpp::get_logger("Edge_SLAM_RGBD"), "cv_bridge exception: %s", e.what());
         return;
     }
 
-    cv_bridge::CvImageConstPtr cv_ptrD;
+    cv_bridge::CvImagePtr cv_ptrD;
     try
     {
-        cv_ptrD = cv_bridge::toCvShare(msgD);
+        cv_ptrD = cv_bridge::toCvCopy(msgD, msgD->encoding);
     }
     catch (cv_bridge::Exception& e)
     {
-        ROS_ERROR("cv_bridge exception: %s", e.what());
+        RCLCPP_ERROR(rclcpp::get_logger("Edge_SLAM_RGBD"), "cv_bridge exception: %s", e.what());
         return;
     }
 
-    mpSLAM->TrackRGBD(cv_ptrRGB->image,cv_ptrD->image,cv_ptrRGB->header.stamp.toSec());
+
+    double t = msgRGB->header.stamp.sec + msgRGB->header.stamp.nanosec*1e-9;
+
+    mpSLAM->TrackRGBD(cv_ptrRGB->image.clone(), cv_ptrD->image.clone(), t);
 }
 
