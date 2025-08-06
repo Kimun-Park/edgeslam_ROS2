@@ -32,6 +32,7 @@
 *.out
 *.app
 
+.vscode
 
 # Project specific gitignore
 CMakeLists.txt.user
@@ -60,4 +61,8 @@ Examples/ROS/Edge_SLAM/Mono
 Examples/ROS/Edge_SLAM/RGBD
 Examples/ROS/Edge_SLAM/Stereo
 Examples/ROS/Edge_SLAM/build/
+Examples/ROS/Edge_SLAM/install/
+Examples/ROS/Edge_SLAM/log/
+Examples/ROS/Edge_SLAM/KeyFrameTrajectory.txt
 
+Examples/RGB-D/carter.yaml

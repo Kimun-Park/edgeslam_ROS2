@@ -30,7 +30,7 @@
 #include <message_filters/time_synchronizer.h>
 #include <message_filters/sync_policies/approximate_time.h>
 
-#include <opencv2/core/core.hpp>
+#include <opencv2/core.hpp>
 
 #include"../../../include/System.h"
 
