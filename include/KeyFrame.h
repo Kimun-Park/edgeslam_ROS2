@@ -33,6 +33,8 @@
 #include "SerializeObject.h"
 #include <boost/archive/text_oarchive.hpp>
 #include <boost/archive/text_iarchive.hpp>
+#include <boost/archive/binary_oarchive.hpp>
+#include <boost/archive/binary_iarchive.hpp>
 #include <boost/serialization/set.hpp>
 
 #include <mutex>
@@ -85,6 +87,7 @@ private:
                 ar & mNeedNKF;
                 ar & mPassedF;
                 ar & mResetKF;
+                ar & mRobotId;
         };
 
 public:
@@ -183,6 +186,10 @@ public:
     int GetNeedNKF();
     bool GetPassedF();
     bool GetResetKF();
+    
+    // Multi-robot SLAM: robot_id setter/getter functions
+    void SetRobotId(int robotId);
+    int GetRobotId() const;
 
     // The following variables are accesed from only 1 thread or never change (no mutex needed).
 public:
@@ -338,6 +345,9 @@ protected:
     int mNeedNKF;   // Flag to save the status of checking the keyframe selection conditions
     bool mPassedF;  // Flag to pass the status of one of the keyframe selection conditions to the edge
     bool mResetKF;  // Flag to pass reset signal to the edge
+    
+    // Multi-robot SLAM: robot identification
+    int mRobotId;   // Robot ID for multi-robot support
 
     std::mutex mMutexPose;
     std::mutex mMutexConnections;

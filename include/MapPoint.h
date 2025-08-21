@@ -29,6 +29,8 @@
 #include "SerializeObject.h"
 #include <boost/archive/text_oarchive.hpp>
 #include <boost/archive/text_iarchive.hpp>
+#include <boost/archive/binary_oarchive.hpp>
+#include <boost/archive/binary_iarchive.hpp>
 #include <boost/serialization/set.hpp>
 
 #include <opencv2/core/core.hpp>
@@ -69,6 +71,7 @@ class MapPoint
             ar & mpReplaced;
             ar & mfMinDistance;
             ar & mfMaxDistance;
+            ar & mRobotId;
         }
 
 public:
@@ -132,6 +135,16 @@ public:
 
     // Edge-SLAM: this function is either accesed from tracking thread on mobile-side or local-mapping thread on edge-side, thus no mutex needed
     void setMapPointer(Map* pMap){ mpMap = pMap;}
+    
+    // Multi-robot SLAM: robot_id setter/getter functions
+    void SetRobotId(int robotId);
+    int GetRobotId() const;
+    
+    // Multi-robot SLAM: robot observation functions
+    void AddRobotObservation(int robotId, KeyFrame* pKF);
+    void EraseRobotObservation(int robotId, KeyFrame* pKF);
+    std::set<KeyFrame*> GetRobotObservations(int robotId);
+    bool IsObservedByRobot(int robotId);
 
 public:
     // Edge-SLAM: tracking thread id
@@ -209,6 +222,10 @@ protected:
 
      // Edge-SLAM: which thread is running (1:tracking, 2:local-mapping)
      int whichThread;
+     
+     // Multi-robot SLAM: robot identification and observation tracking
+     int mRobotId;                                   // Robot ID that created this MapPoint
+     std::map<int, std::set<KeyFrame*>> mRobotObservations; // Observations per robot
 };
 
 } //namespace ORB_SLAM

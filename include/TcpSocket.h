@@ -23,6 +23,11 @@
 #include <vector>
 #include <fcntl.h>  // For nonblocking sockets
 
+// Forward declaration for MultiClientServer
+namespace ORB_SLAM2 { 
+    class MultiClientServer; 
+}
+
 class TcpSocket{
 public:
     TcpSocket();
@@ -42,6 +47,17 @@ public:
     bool checkAlive(); // Check termination flag
     void setConnTimeOut(bool timeOut); // Set connection timeout flag
     bool checkConnTimeOut(); // Check connection timeout flag
+    
+    // Public accessors for socket internals (needed by MultiClientServer)
+    int getMySocket() const { return mySocket; }
+    int getOtherSocket() const { return otherSocket; }
+    int getSocketHandle() const { return socketHandle; }
+    void setMySocket(int socket) { mySocket = socket; }
+    void setOtherSocket(int socket) { otherSocket = socket; }
+    void setSocketHandle(int handle) { socketHandle = handle; }
+    
+    // Friend class declaration
+    friend class ORB_SLAM2::MultiClientServer;
 
 private:
     int mySocket, otherSocket; // Socket descriptors

@@ -28,7 +28,8 @@ set(CMAKE_CXX_STANDARD 17)
 
 LIST(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake_modules)
 
-find_package(OpenCV 4 REQUIRED)
+set(OpenCV_DIR "/usr/lib/x86_64-linux-gnu/cmake/opencv4")
+find_package(OpenCV 4.5 REQUIRED)
 
 find_package(Eigen3 3.1.0 REQUIRED)
 find_package(Pangolin REQUIRED)
@@ -65,6 +66,8 @@ src/Sim3Solver.cc
 src/Initializer.cc
 src/Viewer.cc
 src/TcpSocket.cc
+src/NetworkConfig.cc
+src/MultiClientServer.cc
 )
 
 target_link_libraries(${PROJECT_NAME}

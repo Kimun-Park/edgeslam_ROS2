@@ -47,7 +47,7 @@ const int LocalMapping::RELOC_FREQ=5000;
 
 // Edge-SLAM: added settings file path variable
 LocalMapping::LocalMapping(Map *pMap, KeyFrameDatabase* pKFDB, ORBVocabulary* pVoc, const string &strSettingPath, const float bMonocular):
-    mbMonocular(bMonocular), mbResetRequested(false), mbFinishRequested(false), mbFinished(true), mpORBVocabulary(pVoc), mpMap(pMap), mpKeyFrameDB(pKFDB),
+    mbMonocular(bMonocular), mbResetRequested(false), mbFinishRequested(false), mbFinished(false), mpORBVocabulary(pVoc), mpMap(pMap), mpKeyFrameDB(pKFDB),
     mbAbortBA(false), mbStopped(false), mbStopRequested(false), mbNotStop(false), mbAcceptKeyFrames(true)
 {
     // Edge-SLAM: everything in this scope is new
@@ -61,29 +61,44 @@ LocalMapping::LocalMapping(Map *pMap, KeyFrameDatabase* pKFDB, ORBVocabulary* pV
     mMinFrames = 0;
     mMaxFrames = fps;
 
-    // Setting up connections
-    string ip;
-    string port_number;
-    cout << "Enter the device IP address: ";
-    getline(cin, ip);
-    // Keyframe connection
-    cout << "Enter the port number used for keyframe connection: ";
-    getline(cin, port_number);
-    keyframe_socket = new TcpSocket(ip, std::stoi(port_number));
-    keyframe_socket->waitForConnection();
-    keyframe_thread = new thread(&ORB_SLAM2::LocalMapping::tcp_receive, &keyframe_queue, keyframe_socket, 2, "keyframe");
-    // Frame connection
-    cout << "Enter the port number used for frame connection: ";
-    getline(cin, port_number);
-    frame_socket = new TcpSocket(ip, std::stoi(port_number));
-    frame_socket->waitForConnection();
-    frame_thread = new thread(&ORB_SLAM2::LocalMapping::tcp_receive, &frame_queue, frame_socket, 1, "frame");
-    // Map connection
-    cout << "Enter the port number used for map connection: ";
-    getline(cin, port_number);
-    map_socket = new TcpSocket(ip, std::stoi(port_number));
-    map_socket->waitForConnection();
-    map_thread = new thread(&ORB_SLAM2::LocalMapping::tcp_send, &map_queue, map_socket, "map");
+    // Edge-SLAM: Auto network configuration for server
+    NetworkConfig::RobotConfig net_config = NetworkConfig::GetCachedRobotConfig();
+    
+    // Create multi-client servers for each channel
+    keyframe_server = new MultiClientServer(net_config.server_ip, net_config.keyframe_server_port, "keyframe");
+    frame_server = new MultiClientServer(net_config.server_ip, net_config.frame_server_port, "frame");
+    map_server = new MultiClientServer(net_config.server_ip, net_config.map_server_port, "map");
+    
+    // Set up queue connections
+    keyframe_server->SetReceiveQueue(&keyframe_blocking_queue);
+    frame_server->SetReceiveQueue(&frame_blocking_queue);
+    map_server->SetSendQueue(&map_queue);
+    
+    // Start all servers
+    keyframe_server->StartServer();
+    frame_server->StartServer();
+    map_server->StartServer();
+    
+    // Create threads to transfer data from blocking queues to original queues
+    keyframe_thread = new thread([this]() {
+        std::string data;
+        while (!this->mbFinished) {
+            if (this->keyframe_blocking_queue.wait_dequeue_timed(data, std::chrono::milliseconds(100))) {
+                this->keyframe_queue.enqueue(data);
+            }
+        }
+    });
+    
+    frame_thread = new thread([this]() {
+        std::string data;
+        while (!this->mbFinished) {
+            if (this->frame_blocking_queue.wait_dequeue_timed(data, std::chrono::milliseconds(100))) {
+                this->frame_queue.enqueue(data);
+            }
+        }
+    });
+    
+    cout << "🚀 Multi-client servers started! Ready for multiple robot connections." << endl;
 
     mnLastKeyFrameId = 0;
 
@@ -108,21 +123,47 @@ void LocalMapping::keyframeCallback(const std::string& msg)
     KeyFrame *tKF = new KeyFrame();
     try
     {
+        if(msg.empty()) {
+            cout << "log,LocalMapping::keyframeCallback,empty message received" << endl;
+            SetNotStop(false);
+            return;
+        }
+        
+        
         std::stringstream iis(msg);
-        boost::archive::text_iarchive iia(iis);
+        boost::archive::binary_iarchive iia(iis);
         iia >> tKF;
+        
+        // Verify KeyFrame was properly deserialized
+        if(!tKF || tKF->mnId == 0) {
+            cout << "log,LocalMapping::keyframeCallback,KeyFrame deserialization failed" << endl;
+            SetNotStop(false);
+            return;
+        }
     }
-    catch(boost::archive::archive_exception e)
+    catch(boost::archive::archive_exception& e)
     {
-        cout << "log,LocalMapping::keyframeCallback,error: " << e.what() << endl;
+        cout << "log,LocalMapping::keyframeCallback,archive error: " << e.what() << ", code: " << e.code << ", msg_size: " << msg.size() << endl;
+        cout << "DEBUG KeyFrame: Last 100 chars: [" << msg.substr(std::max(0, (int)msg.size()-100)) << "]" << endl;
+        
+        SetNotStop(false);
+        return;
+    }
+    catch(std::exception& e)
+    {
+        cout << "log,LocalMapping::keyframeCallback,std error: " << e.what() << ", msg_size: " << msg.size() << endl;
         SetNotStop(false);
         return;
     }
 
     // Check for reset signal from client
-    if(tKF->GetResetKF() || (tKF->mnFrameId < mnLastKeyFrameId))
+    int robotId = tKF->GetRobotId();
+    unsigned int robotLastFrameId = (mRobotLastKeyFrameId.count(robotId) > 0) ? mRobotLastKeyFrameId[robotId] : 0;
+    
+    if(tKF->GetResetKF() || (tKF->mnFrameId < robotLastFrameId))
     {
-        cout << "log,LocalMapping::keyframeCallback,received reset signal from client with keyframe " << tKF->mnId << endl;
+        cout << "log,LocalMapping::keyframeCallback,received reset signal from client with keyframe " << tKF->mnId 
+             << " (robot " << robotId << ", frameId " << tKF->mnFrameId << " < " << robotLastFrameId << ")" << endl;
 
         RequestReset();
         SetNotStop(false);
@@ -142,6 +183,7 @@ void LocalMapping::keyframeCallback(const std::string& msg)
         mpMap->mvpKeyFrameOrigins.push_back(tKF);
         msLatestKFsId.push(tKF->mnId);
         mnLastKeyFrameId = tKF->mnFrameId;
+        mRobotLastKeyFrameId[robotId] = tKF->mnFrameId;
 
         msNewKFFlag = true;
 
@@ -149,18 +191,24 @@ void LocalMapping::keyframeCallback(const std::string& msg)
     }
     else
     {
-        if(NeedNewKeyFrame(tKF))
+        bool needKF = NeedNewKeyFrame(tKF);
+        std::cout << "[DEBUG] NeedNewKeyFrame(" << tKF->mnId << ") = " << (needKF ? "true" : "false") << std::endl;
+        
+        if(needKF)
         {
             InsertKeyFrame(tKF);
             msLatestKFsId.push(tKF->mnId);
             mnLastKeyFrameId = tKF->mnFrameId;
+            mRobotLastKeyFrameId[robotId] = tKF->mnFrameId;
 
             msNewKFFlag = true;
 
             cout << "log,LocalMapping::keyframeCallback,accepted keyframe " << tKF->mnId << endl;
         }
         else
+        {
             cout << "log,LocalMapping::keyframeCallback,dropped keyframe " << tKF->mnId << endl;
+        }
     }
 
     // Set relocalization variables
@@ -219,7 +267,7 @@ void LocalMapping::Reset()
 void LocalMapping::Run()
 {
     mbFinished = false;
-
+    
     while(1)
     {
         // Edge-SLAM: check if there is a new keyframe received, if not, then check if a frame is received for relocalization
@@ -329,7 +377,7 @@ void LocalMapping::Run()
         if(CheckFinish())
             break;
 
-        usleep(3000);
+        usleep(100);
     }
 
     SetFinish();
@@ -440,6 +488,9 @@ void LocalMapping::ProcessNewKeyFrame()
 
     // Insert Keyframe in Map
     mpMap->AddKeyFrame(mpCurrentKeyFrame);
+    
+    // Multi-robot SLAM: Test robot data separation
+    mpMap->TestRobotDataSeparation();
 }
 
 void LocalMapping::MapPointCulling()
@@ -1076,9 +1127,22 @@ bool LocalMapping::CheckFinish()
 void LocalMapping::SetFinish()
 {
     // Edge-SLAM: terminate TCP threads
-    keyframe_socket->~TcpSocket();
-    frame_socket->~TcpSocket();
-    map_socket->~TcpSocket();
+    // Clean up multi-client servers
+    if (keyframe_server) {
+        keyframe_server->StopServer();
+        delete keyframe_server;
+        keyframe_server = nullptr;
+    }
+    if (frame_server) {
+        frame_server->StopServer();
+        delete frame_server;
+        frame_server = nullptr;
+    }
+    if (map_server) {
+        map_server->StopServer();
+        delete map_server;
+        map_server = nullptr;
+    }
     // This is just a dummy enqueue to unblock the wait_dequeue function in tcp_send()
     map_queue.enqueue("exit");
 
@@ -1168,13 +1232,28 @@ void LocalMapping::frameCallback(const std::string& msg)
     Frame *F = new Frame();
     try
     {
+        if(msg.empty()) {
+            cout << "log,LocalMapping::frameCallback,empty message received" << endl;
+            SetNotStop(false);
+            return;
+        }
+        
         std::stringstream iis(msg);
-        boost::archive::text_iarchive iia(iis);
+        boost::archive::binary_iarchive iia(iis);
+        
         iia >> F;
     }
-    catch(boost::archive::archive_exception e)
+    catch(boost::archive::archive_exception& e)
     {
-        cout << "log,LocalMapping::frameCallback,error: " << e.what() << endl;
+        cout << "log,LocalMapping::frameCallback,archive error: " << e.what() << ", code: " << e.code << ", msg_size: " << msg.size() << endl;
+        cout << "DEBUG Frame: First 100 chars: [" << msg.substr(0, std::min(100, (int)msg.size())) << "]" << endl;
+        
+        SetNotStop(false);
+        return;
+    }
+    catch(std::exception& e)
+    {
+        cout << "log,LocalMapping::frameCallback,std error: " << e.what() << ", msg_size: " << msg.size() << endl;
         SetNotStop(false);
         return;
     }
@@ -1226,7 +1305,7 @@ void LocalMapping::sendLocalMapUpdate()
             KeyFrame* tKF = *mit;
 
             std::ostringstream os;
-            boost::archive::text_oarchive oa(os);
+            boost::archive::binary_oarchive oa(os);
             oa << tKF;
             KFsData.push_back(os.str());
             os.clear();
@@ -1254,7 +1333,7 @@ void LocalMapping::sendLocalMapUpdate()
             if(tKF)
             {
                 std::ostringstream os;
-                boost::archive::text_oarchive oa(os);
+                boost::archive::binary_oarchive oa(os);
                 oa << tKF;
                 KFsData.push_back(os.str());
                 os.clear();
@@ -1282,7 +1361,7 @@ void LocalMapping::sendLocalMapUpdate()
     if(KFsData.size() > 0)
     {
         std::ostringstream os;
-        boost::archive::text_oarchive oa(os);
+        boost::archive::binary_oarchive oa(os);
         oa << KFsData;
         std::string msg;
         msg = os.str();
@@ -1328,7 +1407,7 @@ void LocalMapping::sendRelocMapUpdate()
 
             // first we should send the current keyframe
             std::ostringstream os_current;
-            boost::archive::text_oarchive oa_current(os_current);
+            boost::archive::binary_oarchive oa_current(os_current);
             oa_current << vpcKF;
             KFsData.push_back(os_current.str());
             os_current.clear();
@@ -1354,7 +1433,7 @@ void LocalMapping::sendRelocMapUpdate()
                 kfCount++;
 
                 std::ostringstream os;
-                boost::archive::text_oarchive oa(os);
+                boost::archive::binary_oarchive oa(os);
                 oa << tKF;
                 KFsData.push_back(os.str());
                 os.clear();
@@ -1388,7 +1467,7 @@ void LocalMapping::sendRelocMapUpdate()
                     continue;
 
                 std::ostringstream os;
-                boost::archive::text_oarchive oa(os);
+                boost::archive::binary_oarchive oa(os);
                 oa << tKF;
                 KFsData.push_back(os.str());
                 os.clear();
@@ -1420,7 +1499,7 @@ void LocalMapping::sendRelocMapUpdate()
                         continue;
 
                     std::ostringstream os;
-                    boost::archive::text_oarchive oa(os);
+                    boost::archive::binary_oarchive oa(os);
                     oa << tKF;
                     KFsData.push_back(os.str());
                     os.clear();
@@ -1446,7 +1525,7 @@ void LocalMapping::sendRelocMapUpdate()
         }
 
         std::ostringstream os;
-        boost::archive::text_oarchive oa(os);
+        boost::archive::binary_oarchive oa(os);
         oa << KFsData;
         std::string msg;
         msg = os.str();

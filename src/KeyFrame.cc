@@ -42,7 +42,7 @@ KeyFrame::KeyFrame(Frame &F, Map *pMap, KeyFrameDatabase *pKFDB):
     mvInvLevelSigma2(F.mvInvLevelSigma2), mnMinX(F.mnMinX), mnMinY(F.mnMinY), mnMaxX(F.mnMaxX),
     mnMaxY(F.mnMaxY), mK(F.mK), mvpMapPoints(F.mvpMapPoints), mpKeyFrameDB(pKFDB),
     mpORBvocabulary(F.mpORBvocabulary), mbFirstConnection(true), mpParent(NULL), mpParent_id(0), mbNotErase(false),
-    mbToBeErased(false), mbBad(false), mHalfBaseline(F.mb/2), mpMap(pMap), mNeedNKF(2), mPassedF(true), mResetKF(false)
+    mbToBeErased(false), mbBad(false), mHalfBaseline(F.mb/2), mpMap(pMap), mNeedNKF(2), mPassedF(true), mResetKF(false), mRobotId(F.mRobotId)
 {
     mnId=nNextId++;
 
@@ -91,6 +91,18 @@ bool KeyFrame::GetPassedF()
 bool KeyFrame::GetResetKF()
 {
     return mResetKF;
+}
+
+// Multi-robot SLAM: mRobotId setter function
+void KeyFrame::SetRobotId(int robotId)
+{
+    mRobotId = robotId;
+}
+
+// Multi-robot SLAM: mRobotId getter function
+int KeyFrame::GetRobotId() const
+{
+    return mRobotId;
 }
 
 // Edge-SLAM

@@ -59,7 +59,7 @@ int main(int argc, char **argv)
     rclcpp::init(argc, argv);
     auto node = rclcpp::Node::make_shared("Edge_SLAM_RGBD");
     
-    if((argc != 4) || ((RunType.compare("client") != 0) && (RunType.compare("server") != 0)))
+    if((argc < 4) || ((RunType.compare("client") != 0) && (RunType.compare("server") != 0)))
     {
         cerr << endl << "Usage: ros2 run Edge_SLAM RGBD VOC_PATH SETTINGS_PATH RUN_TYPE(client|server)" << endl;
         rclcpp::shutdown();
@@ -112,8 +112,6 @@ int main(int argc, char **argv)
 
 void ImageGrabber::GrabRGBD(const sensor_msgs::msg::Image::ConstSharedPtr& msgRGB,const sensor_msgs::msg::Image::ConstSharedPtr& msgD)
 {
-    RCLCPP_INFO(rclcpp::get_logger("Edge_SLAM_RGBD"), "Depth encoding: %s", msgD->encoding.c_str());
-
     // Copy the ros image message to cv::Mat.
     cv_bridge::CvImagePtr cv_ptrRGB;
     try

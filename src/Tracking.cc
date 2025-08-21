@@ -167,35 +167,24 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
             mDepthMapFactor = 1.0f/mDepthMapFactor;
     }
 
-    // Edge-SLAM: setting up connections
-    string ip, server_ip;
-    string port_number, server_port;
-    cout << "Enter the device IP address: ";
-    getline(cin, ip);
-    cout << "Enter the server IP address: ";
-    getline(cin, server_ip);
+    // Edge-SLAM: Auto network configuration
+    NetworkConfig::RobotConfig net_config = NetworkConfig::GetCachedRobotConfig();
+    
     // Edge-SLAM: keyframe connection
-    cout << "Enter the port number used for keyframe connection: ";
-    getline(cin, port_number);
-    cout << "Enter the server port number used for keyframe connection: ";
-    getline(cin, server_port);
-    keyframe_socket = new TcpSocket(ip, std::stoi(port_number), server_ip, std::stoi(server_port));
+    keyframe_socket = new TcpSocket(net_config.client_ip, net_config.keyframe_client_port, 
+                                   net_config.server_ip, net_config.keyframe_server_port);
     keyframe_socket->sendConnectionRequest();
     keyframe_thread = new thread(&ORB_SLAM2::Tracking::tcp_send, &keyframe_queue, keyframe_socket, "keyframe");
+    
     // Edge-SLAM: frame connection
-    cout << "Enter the port number used for frame connection: ";
-    getline(cin, port_number);
-    cout << "Enter the server port number used for frame connection: ";
-    getline(cin, server_port);
-    frame_socket = new TcpSocket(ip, std::stoi(port_number), server_ip, std::stoi(server_port));
+    frame_socket = new TcpSocket(net_config.client_ip, net_config.frame_client_port,
+                                net_config.server_ip, net_config.frame_server_port);
     frame_socket->sendConnectionRequest();
     frame_thread = new thread(&ORB_SLAM2::Tracking::tcp_send, &frame_queue, frame_socket, "frame");
+    
     // Edge-SLAM: map connection
-    cout << "Enter the port number used for map connection: ";
-    getline(cin, port_number);
-    cout << "Enter the server port number used for map connection: ";
-    getline(cin, server_port);
-    map_socket = new TcpSocket(ip, std::stoi(port_number), server_ip, std::stoi(server_port));
+    map_socket = new TcpSocket(net_config.client_ip, net_config.map_client_port,
+                              net_config.server_ip, net_config.map_server_port);
     map_socket->sendConnectionRequest();
     map_thread = new thread(&ORB_SLAM2::Tracking::tcp_receive, &map_queue, map_socket, 1, "map");
 
@@ -247,14 +236,24 @@ void Tracking::mapCallback(const std::string& msg)
     mapVec.clear();
     try
     {
+        if(msg.empty()) {
+            cout << "log,Tracking::mapCallback,empty message received" << endl;
+            return;
+        }
+        
         std::stringstream is(msg);
-        boost::archive::text_iarchive ia(is);
+        boost::archive::binary_iarchive ia(is);
         ia >> mapVec;
         is.clear();
     }
-    catch(boost::archive::archive_exception e)
+    catch(boost::archive::archive_exception& e)
     {
-        cout << "log,Tracking::mapCallback,map error: " << e.what() << endl;
+        cout << "log,Tracking::mapCallback,map archive error: " << e.what() << ", msg_size: " << msg.size() << endl;
+        return;
+    }
+    catch(std::exception& e)
+    {
+        cout << "log,Tracking::mapCallback,map std error: " << e.what() << ", msg_size: " << msg.size() << endl;
         return;
     }
 
@@ -308,14 +307,35 @@ void Tracking::mapCallback(const std::string& msg)
         {
             try
             {
+                if(mapVec[i].empty()) {
+                    cout << "log,Tracking::mapCallback,empty keyframe message at index " << i << endl;
+                    tKF = static_cast<KeyFrame*>(NULL);
+                    continue;
+                }
+                
                 std::stringstream iis(mapVec[i]);
-                boost::archive::text_iarchive iia(iis);
+                boost::archive::binary_iarchive iia(iis);
                 iia >> tKF;
                 iis.clear();
+                
+                // Verify KeyFrame was properly deserialized
+                if(!tKF || tKF->mnId == 0) {
+                    cout << "log,Tracking::mapCallback,KeyFrame deserialization failed at index " << i << endl;
+                    tKF = static_cast<KeyFrame*>(NULL);
+                    continue;
+                }
             }
-            catch(boost::archive::archive_exception e)
+            catch(boost::archive::archive_exception& e)
             {
-                cout << "log,Tracking::mapCallback,keyframe error: " << e.what() << endl;
+                cout << "log,Tracking::mapCallback,keyframe archive error: " << e.what() << ", msg_size: " << mapVec[i].size() << ", index: " << i << endl;
+
+                // Clear
+                tKF = static_cast<KeyFrame*>(NULL);
+                continue;
+            }
+            catch(std::exception& e)
+            {
+                cout << "log,Tracking::mapCallback,keyframe std error: " << e.what() << ", msg_size: " << mapVec[i].size() << ", index: " << i << endl;
 
                 // Clear
                 tKF = static_cast<KeyFrame*>(NULL);
@@ -966,7 +986,7 @@ void Tracking::StereoInitialization()
         // Edge-SLAM: moved to KeyframeCallback() function in local-mapping thread on server
         //mpLocalMapper->InsertKeyFrame(pKFini);
         std::ostringstream os;
-        boost::archive::text_oarchive oa(os);
+        boost::archive::binary_oarchive oa(os);
         oa << pKFini;
         std::string msg;
         msg = os.str();
@@ -1156,7 +1176,7 @@ void Tracking::CreateInitialMapMonocular()
     // pKFini
     {
         std::ostringstream os;
-        boost::archive::text_oarchive oa(os);
+        boost::archive::binary_oarchive oa(os);
         oa << pKFini;
         std::string msg;
         msg = os.str();
@@ -1166,7 +1186,7 @@ void Tracking::CreateInitialMapMonocular()
     // pKFcur
     {
         std::ostringstream os;
-        boost::archive::text_oarchive oa(os);
+        boost::archive::binary_oarchive oa(os);
         oa << pKFcur;
         std::string msg;
         msg = os.str();
@@ -1629,10 +1649,11 @@ void Tracking::CreateNewKeyFrame(int needNKF)
     // Edge-SLAM: Add Keyframe to database
     mpKeyFrameDB->add(pKF);
     std::ostringstream os;
-    boost::archive::text_oarchive oa(os);
+    boost::archive::binary_oarchive oa(os);
     oa << pKF;
     std::string msg;
     msg = os.str();
+    
     if(keyframe_queue.size_approx() >= (LOCAL_MAP_SIZE/3))
     {
         string data;
@@ -1876,10 +1897,12 @@ bool Tracking::Relocalization()
         Frame *tF = &mCurrentFrame;
 
         std::ostringstream os;
-        boost::archive::text_oarchive oa(os);
+        boost::archive::binary_oarchive oa(os);
         oa << tF;
         std::string msg;
         msg = os.str();
+        
+        
         frame_queue.enqueue(msg);
 
         msRelocStatus = true;
@@ -2082,7 +2105,7 @@ void Tracking::Reset()
         mpLastKeyFrame->SetResetKF(true);
 
         std::ostringstream os;
-        boost::archive::text_oarchive oa(os);
+        boost::archive::binary_oarchive oa(os);
         oa << mpLastKeyFrame;
         std::string msg;
         msg = os.str();

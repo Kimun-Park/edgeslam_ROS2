@@ -51,9 +51,22 @@ public:
     std::vector<KeyFrame*> GetAllKeyFrames();
     std::vector<MapPoint*> GetAllMapPoints();
     std::vector<MapPoint*> GetReferenceMapPoints();
+    
+    // Multi-robot SLAM: robot-specific data access functions
+    std::vector<KeyFrame*> GetRobotKeyFrames(int robotId);
+    std::vector<MapPoint*> GetRobotMapPoints(int robotId);
+    std::vector<MapPoint*> GetSharedMapPoints();  // MapPoints observed by multiple robots
+    std::set<int> GetActiveRobots();  // Get list of robots with data in map
 
     long unsigned int MapPointsInMap();
     long unsigned  KeyFramesInMap();
+    
+    // Multi-robot SLAM: robot-specific counting functions
+    long unsigned int RobotMapPointsInMap(int robotId);
+    long unsigned int RobotKeyFramesInMap(int robotId);
+    
+    // Multi-robot SLAM: test function for data separation
+    void TestRobotDataSeparation();
 
     long unsigned int GetMaxKFid();
 
@@ -75,10 +88,13 @@ public:
 
 protected:
     std::set<MapPoint*> mspMapPoints;
-
     std::set<KeyFrame*> mspKeyFrames;
-
     std::vector<MapPoint*> mvpReferenceMapPoints;
+    
+    // Multi-robot SLAM: robot-specific data containers
+    std::map<int, std::set<KeyFrame*>> mspRobotKeyFrames;    // KeyFrames per robot
+    std::map<int, std::set<MapPoint*>> mspRobotMapPoints;    // MapPoints per robot
+    std::set<MapPoint*> mspSharedMapPoints;                  // MapPoints observed by multiple robots
 
     long unsigned int mnMaxKFid;
 

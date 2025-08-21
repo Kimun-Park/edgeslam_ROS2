@@ -21,6 +21,7 @@
 #include "Frame.h"
 #include "Converter.h"
 #include "ORBmatcher.h"
+#include "NetworkConfig.h"
 #include <thread>
 
 namespace ORB_SLAM2
@@ -43,7 +44,7 @@ Frame::Frame(const Frame &frame)
      mvKeysRight(frame.mvKeysRight), mvKeysUn(frame.mvKeysUn),  mvuRight(frame.mvuRight),
      mvDepth(frame.mvDepth), mBowVec(frame.mBowVec), mFeatVec(frame.mFeatVec),
      mDescriptors(frame.mDescriptors.clone()), mDescriptorsRight(frame.mDescriptorsRight.clone()),
-     mvpMapPoints(frame.mvpMapPoints), mvbOutlier(frame.mvbOutlier), mnId(frame.mnId),
+     mvpMapPoints(frame.mvpMapPoints), mvbOutlier(frame.mvbOutlier), mnId(frame.mnId), mRobotId(frame.mRobotId),
      mpReferenceKF(frame.mpReferenceKF), mnScaleLevels(frame.mnScaleLevels),
      mfScaleFactor(frame.mfScaleFactor), mfLogScaleFactor(frame.mfLogScaleFactor),
      mvScaleFactors(frame.mvScaleFactors), mvInvScaleFactors(frame.mvInvScaleFactors),
@@ -64,6 +65,9 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
 {
     // Frame ID
     mnId=nNextId++;
+    
+    // Multi-robot SLAM: Set robot ID from NetworkConfig
+    mRobotId = NetworkConfig::GetCachedRobotConfig().robot_id;
 
     // Scale Level Info
     mnScaleLevels = mpORBextractorLeft->GetLevels();
@@ -122,6 +126,9 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeSt
 {
     // Frame ID
     mnId=nNextId++;
+    
+    // Multi-robot SLAM: Set robot ID from NetworkConfig
+    mRobotId = NetworkConfig::GetCachedRobotConfig().robot_id;
 
     // Scale Level Info
     mnScaleLevels = mpORBextractorLeft->GetLevels();
@@ -177,6 +184,9 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
 {
     // Frame ID
     mnId=nNextId++;
+    
+    // Multi-robot SLAM: Set robot ID from NetworkConfig
+    mRobotId = NetworkConfig::GetCachedRobotConfig().robot_id;
 
     // Scale Level Info
     mnScaleLevels = mpORBextractorLeft->GetLevels();
@@ -677,6 +687,18 @@ cv::Mat Frame::UnprojectStereo(const int &i)
     }
     else
         return cv::Mat();
+}
+
+// Multi-robot SLAM: mRobotId setter function
+void Frame::SetRobotId(int robotId)
+{
+    mRobotId = robotId;
+}
+
+// Multi-robot SLAM: mRobotId getter function
+int Frame::GetRobotId() const
+{
+    return mRobotId;
 }
 
 } //namespace ORB_SLAM

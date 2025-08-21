@@ -73,6 +73,12 @@ void TcpSocket::setupSocket()
         std::cout << "TcpSocket::setupSocket: Unable to create Socket.\n";
     }
 
+    // Set socket to reuse address
+    int opt = 1;
+    if (setsockopt(this->mySocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        std::cout << "TcpSocket::setupSocket: Unable to set SO_REUSEADDR.\n";
+    }
+
     // Bind the ip address and port to a socket
 
     this->myAddress.sin_family = AF_INET;
@@ -327,7 +333,12 @@ std::string TcpSocket::recieveMessage()
 
     // Receive message size
     unsigned int sizeOfMessage;
-    recv(this->socketHandle, &sizeOfMessage, sizeof(unsigned int), 0);
+    int recvResult = recv(this->socketHandle, &sizeOfMessage, sizeof(unsigned int), 0);
+    if(recvResult <= 0) {
+        std::cout<<"TcpSocket::recieveMessage: Error receiving message size. Reattempting to connect.\n";
+        this->reconnect();
+        return "";
+    }
     std::cout<<"TcpSocket::recieveMessage: Expecting message of size: "<<sizeOfMessage<<"\n";
 
     // Send ack
@@ -338,29 +349,39 @@ std::string TcpSocket::recieveMessage()
         return "";
     }
 
-    // Receive message
-    const unsigned int MAX_BUF_LENGTH = 1024;
+    // Receive message with larger buffer for large KeyFrame data
+    const unsigned int MAX_BUF_LENGTH = 8192; // Increased from 1024 to 8192
     std::vector<char> buffer(MAX_BUF_LENGTH);
     std::string rcv;
+    rcv.reserve(sizeOfMessage); // Pre-allocate memory
     int bytesReceived = 0;
+    unsigned int remainingBytes = sizeOfMessage;
     do {
-        bytesReceived = recv(this->socketHandle, &buffer[0], MAX_BUF_LENGTH, 0);
+        int toReceive = std::min(remainingBytes, MAX_BUF_LENGTH);
+        bytesReceived = recv(this->socketHandle, &buffer[0], toReceive, MSG_WAITALL);
 
         // append string from buffer.
-        if(bytesReceived < 1)
+        if(bytesReceived <= 0)
         {
-            std::cout<<"TcpSocket::recieveMessage: Error, Reconnecting again.\n";
+            std::cout<<"TcpSocket::recieveMessage: Error receiving data (got " << bytesReceived << " bytes, expected " << toReceive << "). Reconnecting.\n";
             this->reconnect();
             return "";
         }
         else
         {
-            rcv.append(&buffer[0], (&buffer[0])+bytesReceived);
+            rcv.append(&buffer[0], bytesReceived);
         }
-        sizeOfMessage -= bytesReceived;
-    } while(sizeOfMessage > 0);
+        remainingBytes -= bytesReceived;
+    } while(remainingBytes > 0);
 
-    std::cout<<"TcpSocket::recieveMessage: Remaining size is "<<sizeOfMessage<<", Size of recieved message is "<<rcv.size()<<"\n";
+    std::cout<<"TcpSocket::recieveMessage: Expected size: "<<sizeOfMessage<<", Received size: "<<rcv.size()<<"\n";
+    
+    // Validate received data size
+    if(rcv.size() != sizeOfMessage) {
+        std::cout<<"TcpSocket::recieveMessage: Size mismatch! Expected " << sizeOfMessage << ", got " << rcv.size() << ". Reconnecting.\n";
+        this->reconnect();
+        return "";
+    }
 
     // Send ack
     if(!(send(this->socketHandle, "OK", 2, MSG_NOSIGNAL) == 2))

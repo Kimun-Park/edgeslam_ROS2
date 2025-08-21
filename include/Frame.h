@@ -36,6 +36,8 @@
 #include "SerializeObject.h"
 #include <boost/archive/text_oarchive.hpp>
 #include <boost/archive/text_iarchive.hpp>
+#include <boost/archive/binary_oarchive.hpp>
+#include <boost/archive/binary_iarchive.hpp>
 #include <boost/serialization/set.hpp>
 
 namespace ORB_SLAM2
@@ -55,6 +57,7 @@ private:
         template<class Archive>
         void serialize(Archive & ar, const unsigned int version){
                 ar &  mnId;
+                ar &  mRobotId;
                 ar &  mTimeStamp;
                 ar &  mfGridElementHeightInv; ar &  mfGridElementWidthInv;
                 ar &  fx; ar &  fy; ar &  cx; ar & cy; ar & invfx; ar & invfy; ar & mbf;
@@ -125,6 +128,10 @@ public:
 
     // Backprojects a keypoint (if stereo/depth info available) into 3D world coordinates.
     cv::Mat UnprojectStereo(const int &i);
+    
+    // Multi-robot SLAM: robot_id setter/getter functions
+    void SetRobotId(int robotId);
+    int GetRobotId() const;
 
 public:
     // Vocabulary used for relocalization.
@@ -194,6 +201,9 @@ public:
     // Current and Next Frame id.
     static long unsigned int nNextId;
     long unsigned int mnId;
+    
+    // Multi-robot SLAM: robot identification
+    int mRobotId;
 
     // Reference Keyframe.
     KeyFrame* mpReferenceKF;

@@ -27,6 +27,7 @@
 #include "Tracking.h"
 #include "KeyFrameDatabase.h"
 #include <mutex>
+#include <map>
 
 // Edge-SLAM
 #include "ORBVocabulary.h"
@@ -37,6 +38,8 @@
 #include <TcpSocket.h>
 #include "concurrentqueue.h"
 #include "blockingconcurrentqueue.h"
+#include "NetworkConfig.h"
+#include "MultiClientServer.h"
 #include <thread>
 
 namespace ORB_SLAM2
@@ -111,6 +114,9 @@ protected:
     int mMaxFrames;
     // Similar to the one in Tracking.h
     unsigned int mnLastKeyFrameId;
+    
+    // Multi-robot SLAM: robot-specific frame ID tracking
+    std::map<int, unsigned int> mRobotLastKeyFrameId;
     bool CheckReset();
 
     bool CheckNewKeyFrames();
@@ -175,10 +181,13 @@ protected:
     moodycamel::ConcurrentQueue<std::string> keyframe_queue;
     moodycamel::ConcurrentQueue<std::string> frame_queue;
     moodycamel::BlockingConcurrentQueue<std::string> map_queue;
-    // Edge-SLAM: TcpSocket Objects
-    TcpSocket* keyframe_socket;
-    TcpSocket* frame_socket;
-    TcpSocket* map_socket;
+    // Edge-SLAM: blocking queues for multi-client servers
+    moodycamel::BlockingConcurrentQueue<std::string> keyframe_blocking_queue;
+    moodycamel::BlockingConcurrentQueue<std::string> frame_blocking_queue;
+    // Edge-SLAM: Multi-client TCP servers
+    MultiClientServer* keyframe_server;
+    MultiClientServer* frame_server;
+    MultiClientServer* map_server;
 
     // Edge-SLAM: relocalization
     static vector<KeyFrame*> vpCandidateKFs;

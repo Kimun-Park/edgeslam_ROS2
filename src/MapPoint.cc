@@ -34,7 +34,7 @@ MapPoint::MapPoint(const cv::Mat &Pos, KeyFrame *pRefKF, Map* pMap, int wchThrea
     mnFirstKFid(pRefKF->mnId), mnFirstFrame(pRefKF->mnFrameId), nObs(0), mnTrackReferenceForFrame(0),
     mnLastFrameSeen(0), mnBALocalForKF(0), mnFuseCandidateForKF(0), mnLoopPointForKF(0), mnCorrectedByKF(0),
     mnCorrectedReference(0), mnBAGlobalForKF(0), mpRefKF(pRefKF), mnVisible(1), mnFound(1), mbBad(false),
-    mpReplaced(static_cast<MapPoint*>(NULL)), mfMinDistance(0), mfMaxDistance(0), mpMap(pMap), whichThread(wchThread)
+    mpReplaced(static_cast<MapPoint*>(NULL)), mfMinDistance(0), mfMaxDistance(0), mpMap(pMap), whichThread(wchThread), mRobotId(pRefKF->GetRobotId())
 {
     Pos.copyTo(mWorldPos);
     mNormalVector = cv::Mat::zeros(3,1,CV_32F);
@@ -64,7 +64,7 @@ MapPoint::MapPoint(const cv::Mat &Pos, Map* pMap, Frame* pFrame, const int &idxF
     mnFirstKFid(-1), mnFirstFrame(pFrame->mnId), nObs(0), mnTrackReferenceForFrame(0), mnLastFrameSeen(0),
     mnBALocalForKF(0), mnFuseCandidateForKF(0),mnLoopPointForKF(0), mnCorrectedByKF(0),
     mnCorrectedReference(0), mnBAGlobalForKF(0), mpRefKF(static_cast<KeyFrame*>(NULL)), mnVisible(1),
-    mnFound(1), mbBad(false), mpReplaced(NULL), mpMap(pMap), whichThread(wchThread)
+    mnFound(1), mbBad(false), mpReplaced(NULL), mpMap(pMap), whichThread(wchThread), mRobotId(pFrame->mRobotId)
 {
     Pos.copyTo(mWorldPos);
     cv::Mat Ow = pFrame->GetCameraCenter();
@@ -523,6 +523,54 @@ int MapPoint::PredictScale(const float &currentDist, Frame* pF)
     return nScale;
 }
 
+// Multi-robot SLAM: mRobotId setter function
+void MapPoint::SetRobotId(int robotId)
+{
+    unique_lock<mutex> lock(mMutexPos);
+    mRobotId = robotId;
+}
 
+// Multi-robot SLAM: mRobotId getter function
+int MapPoint::GetRobotId() const
+{
+    return mRobotId;
+}
+
+// Multi-robot SLAM: Add robot observation
+void MapPoint::AddRobotObservation(int robotId, KeyFrame* pKF)
+{
+    unique_lock<mutex> lock(mMutexFeatures);
+    mRobotObservations[robotId].insert(pKF);
+}
+
+// Multi-robot SLAM: Remove robot observation
+void MapPoint::EraseRobotObservation(int robotId, KeyFrame* pKF)
+{
+    unique_lock<mutex> lock(mMutexFeatures);
+    if(mRobotObservations.count(robotId))
+    {
+        mRobotObservations[robotId].erase(pKF);
+        if(mRobotObservations[robotId].empty())
+        {
+            mRobotObservations.erase(robotId);
+        }
+    }
+}
+
+// Multi-robot SLAM: Get robot observations
+std::set<KeyFrame*> MapPoint::GetRobotObservations(int robotId)
+{
+    unique_lock<mutex> lock(mMutexFeatures);
+    if(mRobotObservations.count(robotId))
+        return mRobotObservations[robotId];
+    return std::set<KeyFrame*>();
+}
+
+// Multi-robot SLAM: Check if observed by robot
+bool MapPoint::IsObservedByRobot(int robotId)
+{
+    unique_lock<mutex> lock(mMutexFeatures);
+    return mRobotObservations.count(robotId) > 0 && !mRobotObservations[robotId].empty();
+}
 
 } //namespace ORB_SLAM

@@ -42,6 +42,7 @@
 #include <TcpSocket.h>
 #include "concurrentqueue.h"
 #include "blockingconcurrentqueue.h"
+#include "NetworkConfig.h"
 #include <thread>
 
 #include <mutex>
